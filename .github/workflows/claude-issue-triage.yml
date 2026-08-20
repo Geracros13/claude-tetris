@@ -1,0 +1,86 @@
+name: Claude Issue Triage
+
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Issue Triage
+        id: claude-triage
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            ISSUE NUMBER: ${{ github.event.issue.number }}
+            TITLE: ${{ github.event.issue.title }}
+            AUTHOR: ${{ github.event.issue.user.login }}
+            BODY:
+            ${{ github.event.issue.body }}
+
+            Este es un Tetris en JavaScript vanilla (sin build ni dependencias). Lee
+            CLAUDE.md para entender la arquitectura de game.js antes de analizar: estado
+            global + funciones puras sobre `board` (matriz ROWS x COLS), `PIECES`/
+            `rotateCW`, `collide`, `tryRotate` (wall kicks), el loop de `requestAnimationFrame`,
+            `lockPiece` -> `merge`/`clearLines`/`spawn`, scoring (`LINE_SCORES`, level,
+            `dropInterval`), el ghost piece (`ghostY`), y el render (`draw`/`drawNext`).
+
+            Analiza el issue #${{ github.event.issue.number }} de este repo y realiza dos
+            tareas, en este orden:
+
+            ## 1. Labels
+            Ejecuta `gh issue view ${{ github.event.issue.number }}` para ver las labels
+            que ya tiene. Elige solo entre las labels EXISTENTES del repo (no crees labels
+            nuevas): bug, enhancement, documentation, question, accessibility,
+            good first issue, help wanted, invalid, duplicate, wontfix. Si puedes, usa
+            `gh label list` para confirmar la lista/descripciones exactas. Aplica las que
+            correspondan con:
+            `gh issue edit ${{ github.event.issue.number }} --add-label "nombre-label"`
+            No agregues una label que ya esté puesta, y no quites labels existentes que
+            sigan siendo válidas.
+
+            ## 2. Diagnóstico técnico
+            Escribe, en español, un diagnóstico técnico general que sirva de base para
+            implementar la solución más adelante. Debe incluir:
+            - Resumen del problema o petición.
+            - Causa probable, o comportamiento esperado vs. actual.
+            - Qué partes de game.js están probablemente involucradas (nombra funciones/
+              variables concretas de CLAUDE.md: board, PIECES, rotateCW, collide,
+              tryRotate, loop, lockPiece, clearLines, spawn, scoring/LINE_SCORES, level,
+              dropInterval, ghostY, draw, drawNext, etc., y si aplica también
+              index.html/style.css).
+            - Un esbozo de posible enfoque de solución, SIN implementarlo todavía (esto
+              es solo diagnóstico, no la implementación).
+            - Preguntas abiertas o información faltante, si aplica.
+
+            Publica este diagnóstico como un comentario del issue, y hazlo como
+            comentario "sticky" (uno solo, que se actualiza) en vez de duplicarlo en cada
+            edición del issue:
+            - La primera línea del comentario debe ser exactamente el marcador
+              `<!-- claude-diagnosis -->` (en su propia línea, antes del resto del texto).
+            - Antes de publicar, busca si ya existe un comentario tuyo con ese marcador
+              usando: `gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --paginate`
+            - Si ya existe, actualízalo (no crees uno nuevo) con:
+              `gh api repos/${{ github.repository }}/issues/comments/<id> -X PATCH -f body=@archivo.md`
+              (escribe el body a un archivo temporal y pásalo con `-f body=@archivo.md`
+              para evitar problemas de escapado de comillas/saltos de línea).
+            - Si no existe, créalo con:
+              `gh issue comment ${{ github.event.issue.number }} --body-file archivo.md`
+
+          claude_args: |
+            --allowedTools "Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh label list:*),Bash(gh api:*)"
+          # Ver https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # o https://code.claude.com/docs/en/cli-reference para más opciones
