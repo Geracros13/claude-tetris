@@ -66,6 +66,13 @@ jobs:
               es solo diagnóstico, no la implementación).
             - Preguntas abiertas o información faltante, si aplica.
 
+            El comentario debe estar escrito en formato Markdown válido y bien
+            interpretable por GitHub (encabezados con `#`/`##`, listas con `-`, bloques
+            de código con triple backtick y el lenguaje cuando aplique, `inline code`
+            para nombres de funciones/variables como `board` o `clearLines`, negritas
+            con `**texto**`, etc.), de forma que se vea bien renderizado en la interfaz
+            de GitHub.
+
             Publica este diagnóstico como un comentario del issue, y hazlo como
             comentario "sticky" (uno solo, que se actualiza) en vez de duplicarlo en cada
             edición del issue:
