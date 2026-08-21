@@ -13,6 +13,7 @@ const COLORS = [
   '#e57373', // Z - red
   '#64b5f6', // J - pale blue
   '#ffb74d', // L - orange
+  '#f06292', // BONUS - 1x1, rare (~6%), pink/magenta so it reads as "special"
 ];
 
 const PIECES = [
@@ -24,9 +25,19 @@ const PIECES = [
   [[5,5,0],[0,5,5],[0,0,0]],                  // Z
   [[6,0,0],[6,6,6],[0,0,0]],                  // J
   [[0,0,7],[7,7,7],[0,0,0]],                  // L
+  [[8]],                                       // BONUS 1x1
 ];
 
 const LINE_SCORES = [0, 100, 300, 500, 800];
+
+const CLEAR_ANIM_DURATION = 450;   // ms, particle-explosion + row-freeze duration
+const PARTICLES_PER_CELL = 6;
+const PARTICLE_SPEED_MIN = 0.05;   // px/ms
+const PARTICLE_SPEED_MAX = 0.22;   // px/ms
+const PARTICLE_GRAVITY = 0.0006;   // px/ms^2, added to vy each frame
+const COMBO_BONUS = 50;            // points; total = COMBO_BONUS * combo * level
+const PERFECT_CLEAR_BONUS = 1000;  // points; total = PERFECT_CLEAR_BONUS * level
+const BONUS_PIECE_CHANCE = 0.06;   // 6% spawn probability for the 1x1 bonus piece
 
 const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
@@ -43,6 +54,7 @@ const themeSwitch = document.getElementById('theme-switch');
 
 let board, current, next, score, lines, level, paused, gameOver, lastTime, dropAccum, dropInterval, animId;
 let gridColor, blockHighlight;
+let combo, clearing, clearingRows, clearAnimElapsed, particles, clearPopups;
 
 function updateThemeColors() {
   const styles = getComputedStyle(document.documentElement);
@@ -55,7 +67,7 @@ function createBoard() {
 }
 
 function randomPiece() {
-  const type = Math.floor(Math.random() * 7) + 1;
+  const type = Math.random() < BONUS_PIECE_CHANCE ? 8 : Math.floor(Math.random() * 7) + 1;
   const shape = PIECES[type].map(row => [...row]);
   return { type, shape, x: Math.floor(COLS / 2) - Math.floor(shape[0].length / 2), y: 0 };
 }
@@ -101,23 +113,108 @@ function merge() {
         board[current.y + r][current.x + c] = current.shape[r][c];
 }
 
-function clearLines() {
-  let cleared = 0;
-  for (let r = ROWS - 1; r >= 0; r--) {
-    if (board[r].every(v => v !== 0)) {
-      board.splice(r, 1);
-      board.unshift(new Array(COLS).fill(0));
-      cleared++;
-      r++;
+function detectFullRows() {
+  const rows = [];
+  for (let r = 0; r < ROWS; r++) {
+    if (board[r].every(v => v !== 0)) rows.push(r);
+  }
+  return rows;
+}
+
+function startClear(rows) {
+  const cleared = rows.length;
+  lines += cleared;
+  const lineScore = (LINE_SCORES[cleared] || 0) * level;
+  combo = combo < 0 ? 0 : combo + 1;
+  const comboBonus = COMBO_BONUS * combo * level; // 0 when combo === 0
+  const perfect = board.every((row, r) => rows.includes(r) || row.every(v => v === 0));
+  const perfectBonus = perfect ? PERFECT_CLEAR_BONUS * level : 0;
+
+  score += lineScore + comboBonus + perfectBonus;
+  level = Math.floor(lines / 10) + 1;
+  dropInterval = Math.max(100, 1000 - (level - 1) * 90);
+  updateHUD();
+
+  clearing = true;
+  clearingRows = rows;
+  clearAnimElapsed = 0;
+  spawnClearParticles(rows);
+  buildClearPopups(cleared, combo, comboBonus, perfect, perfectBonus);
+}
+
+function resolveClear() {
+  const rows = [...clearingRows].sort((a, b) => b - a); // descending so indices stay valid across splices
+  for (const r of rows) board.splice(r, 1);
+  for (let i = 0; i < rows.length; i++) board.unshift(new Array(COLS).fill(0));
+
+  clearing = false;
+  clearingRows = [];
+  particles = [];
+  clearPopups = [];
+  spawn();
+}
+
+function spawnClearParticles(rows) {
+  for (const r of rows) {
+    for (let c = 0; c < COLS; c++) {
+      const color = COLORS[board[r][c]];
+      const cx = c * BLOCK + BLOCK / 2;
+      const cy = r * BLOCK + BLOCK / 2;
+      for (let i = 0; i < PARTICLES_PER_CELL; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = PARTICLE_SPEED_MIN + Math.random() * (PARTICLE_SPEED_MAX - PARTICLE_SPEED_MIN);
+        particles.push({
+          x: cx, y: cy,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 0.05, // slight upward bias for an "explosion" look
+          color,
+          size: 2 + Math.random() * 3,
+        });
+      }
     }
   }
-  if (cleared) {
-    lines += cleared;
-    score += (LINE_SCORES[cleared] || 0) * level;
-    level = Math.floor(lines / 10) + 1;
-    dropInterval = Math.max(100, 1000 - (level - 1) * 90);
-    updateHUD();
+}
+
+function updateParticles(dt) {
+  for (const p of particles) {
+    p.vy += PARTICLE_GRAVITY * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
   }
+}
+
+function drawParticles() {
+  const alpha = Math.max(0, 1 - clearAnimElapsed / CLEAR_ANIM_DURATION);
+  ctx.globalAlpha = alpha;
+  for (const p of particles) {
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function buildClearPopups(cleared, combo, comboBonus, perfect, perfectBonus) {
+  clearPopups = [];
+  if (cleared === 4) clearPopups.push('TETRIS!');
+  if (combo > 0) clearPopups.push(`COMBO x${combo} +${comboBonus}`);
+  if (perfect) clearPopups.push(`PERFECT CLEAR! +${perfectBonus}`);
+}
+
+function drawClearPopups() {
+  if (!clearPopups.length) return;
+  const t = clearAnimElapsed / CLEAR_ANIM_DURATION;
+  const alpha = t < 0.8 ? 1 : Math.max(0, 1 - (t - 0.8) / 0.2);
+  const riseY = -20 * t;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.textAlign = 'center';
+  const baseY = (ROWS * BLOCK) / 2 + riseY;
+  clearPopups.forEach((text, i) => {
+    ctx.fillText(text, (COLS * BLOCK) / 2, baseY + i * 24 - (clearPopups.length - 1) * 12);
+  });
+  ctx.restore();
 }
 
 function ghostY() {
@@ -145,8 +242,13 @@ function softDrop() {
 
 function lockPiece() {
   merge();
-  clearLines();
-  spawn();
+  const rows = detectFullRows();
+  if (rows.length === 0) {
+    combo = -1;
+    spawn();
+    return;
+  }
+  startClear(rows);
 }
 
 function spawn() {
@@ -197,22 +299,29 @@ function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawGrid();
 
-  // board
-  for (let r = 0; r < ROWS; r++)
+  // board (rows mid-clear are hidden while their particles fly out)
+  for (let r = 0; r < ROWS; r++) {
+    if (clearing && clearingRows.includes(r)) continue;
     for (let c = 0; c < COLS; c++)
       drawBlock(ctx, c, r, board[r][c], BLOCK);
+  }
 
-  // ghost
-  const gy = ghostY();
-  for (let r = 0; r < current.shape.length; r++)
-    for (let c = 0; c < current.shape[r].length; c++)
-      if (current.shape[r][c])
-        drawBlock(ctx, current.x + c, gy + r, current.shape[r][c], BLOCK, 0.2);
+  if (!clearing) {
+    // ghost
+    const gy = ghostY();
+    for (let r = 0; r < current.shape.length; r++)
+      for (let c = 0; c < current.shape[r].length; c++)
+        if (current.shape[r][c])
+          drawBlock(ctx, current.x + c, gy + r, current.shape[r][c], BLOCK, 0.2);
 
-  // current piece
-  for (let r = 0; r < current.shape.length; r++)
-    for (let c = 0; c < current.shape[r].length; c++)
-      drawBlock(ctx, current.x + c, current.y + r, current.shape[r][c], BLOCK);
+    // current piece
+    for (let r = 0; r < current.shape.length; r++)
+      for (let c = 0; c < current.shape[r].length; c++)
+        drawBlock(ctx, current.x + c, current.y + r, current.shape[r][c], BLOCK);
+  } else {
+    drawParticles();
+    drawClearPopups();
+  }
 }
 
 function drawNext() {
@@ -251,6 +360,22 @@ function togglePause() {
 function loop(ts) {
   const dt = ts - lastTime;
   lastTime = ts;
+
+  if (clearing) {
+    clearAnimElapsed += dt;
+    updateParticles(dt);
+    if (clearAnimElapsed >= CLEAR_ANIM_DURATION) {
+      resolveClear();
+      if (gameOver) {
+        draw();
+        return;
+      }
+    }
+    draw();
+    animId = requestAnimationFrame(loop);
+    return;
+  }
+
   dropAccum += dt;
   if (dropAccum >= dropInterval) {
     dropAccum = 0;
@@ -278,6 +403,12 @@ function init() {
   gameOver = false;
   dropInterval = 1000;
   dropAccum = 0;
+  combo = -1;
+  clearing = false;
+  clearingRows = [];
+  clearAnimElapsed = 0;
+  particles = [];
+  clearPopups = [];
   lastTime = performance.now();
   next = randomPiece();
   spawn();
@@ -289,7 +420,7 @@ function init() {
 
 document.addEventListener('keydown', e => {
   if (e.code === 'KeyP') { togglePause(); return; }
-  if (paused || gameOver) return;
+  if (paused || gameOver || clearing) return;
   switch (e.code) {
     case 'ArrowLeft':
       if (!collide(current.shape, current.x - 1, current.y)) current.x--;
