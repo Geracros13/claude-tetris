@@ -8,7 +8,17 @@
 </head>
 <body>
   <div class="wrapper">
-    <h1 class="game-title">TETRIS</h1>
+    <div class="top-bar">
+      <h1 class="game-title">TETRIS</h1>
+      <label class="theme-toggle" for="theme-switch" aria-label="Cambiar entre modo oscuro y modo claro">
+        <input type="checkbox" id="theme-switch" />
+        <span class="theme-toggle-track">
+          <span class="icon icon-moon" aria-hidden="true">&#9789;</span>
+          <span class="icon icon-sun" aria-hidden="true">&#9728;</span>
+          <span class="theme-toggle-thumb"></span>
+        </span>
+      </label>
+    </div>
     <div class="game-container">
       <canvas id="board" width="300" height="600"></canvas>
 
